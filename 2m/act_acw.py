@@ -180,11 +180,18 @@ def chronos_features(data):
         for it in item:  # Process act and acw separately
             # Flatten the window (500 samples x 3 axes = 1500 values)
             flat_data = it.flatten()
+            flat_data = np.clip(flat_data, -10, 10)  # optional
             # Convert to string for T5 input (Chronos-T5 expects numerical sequences as text)
-            data_str = " ".join([str(x) for x in flat_data])
+            data_str = " ".join([str(round(x,3)) for x in flat_data])
             inputs = tokenizer(data_str, return_tensors="pt", max_length=512, truncation=True, padding="max_length").to(device)
             
             with torch.no_grad():
+                print("Input length:", inputs["input_ids"].shape)
+                print("Max token ID:", inputs["input_ids"].max())
+                print("Min token ID:", inputs["input_ids"].min())
+                print("Vocab size:", tokenizer.vocab_size)
+                assert inputs["input_ids"].max() < tokenizer.vocab_size, "Invalid token ID!"
+
                 outputs = model(**inputs).last_hidden_state  # Shape: (1, seq_len, hidden_size)
                 # Average pooling over sequence length to get a fixed-size embedding
                 embedding = outputs.mean(dim=1).squeeze().cpu().numpy()  # Shape: (512,)
