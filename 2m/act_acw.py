@@ -8,15 +8,15 @@ from keras.models import Model
 import pandas as pd
 import keras.backend as K
 import random
-from keras.utils import np_utils
-from tensorflow import set_random_seed
+from tensorflow.keras.utils import np_utils
+import tensorflow as tf
 import sys
 import torch
 from transformers import T5EncoderModel, T5Tokenizer
 
 random.seed(0)
 np.random.seed(1)
-set_random_seed(2)
+tf.random.set_seed(2)
 frame_size = 3*1
 
 activity_list = ['01', '02', '03', '04', '05', '06', '07']
@@ -38,8 +38,8 @@ fusion = int(sys.argv[1])
 
 # Load Chronos-T5 Base model and tokenizer
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = T5Tokenizer.from_pretrained("google/t5-v1_1-base")  # Fallback tokenizer; replace with Chronos-T5 specific if available
-model = T5EncoderModel.from_pretrained("amazon/chronos-t5-base").to(device)  # Adjust model name if different
+tokenizer = T5Tokenizer.from_pretrained("t5-base")  # Fallback tokenizer; replace with Chronos-T5 specific if available
+model = T5EncoderModel.from_pretrained("t5-base").to(device)  # Adjust model name if different
 model.eval()
 
 def write_data(file_path, data):
@@ -91,7 +91,7 @@ def trim(_data):
     _inc = _length/(window*frames_per_second)
     _new_data = []
     for i in range(window*frames_per_second):
-        _new_data.append(_data[i*_inc])
+        _new_data.append(_data[int(i*_inc)])
     return _new_data
 
 def frame_reduce(_features):
@@ -251,7 +251,7 @@ def pad_features(_features):
                 if acw_len > ac_max_length:
                     new_item.append(reduce(item[1], acw_len - ac_max_length))
                 elif acw_len < ac_max_length:
-                    new_item.append(pad(item[1], ac_max_length - ac_len))
+                    new_item.append(pad(item[1], ac_max_length - act_len))
                 else:
                     new_item.append(item[1])
                 new_items.append(new_item)
@@ -421,7 +421,7 @@ train_features, test_features = train_test_split(all_features, [i])
 train_features, train_labels = flatten(train_features)
 test_features, test_labels = flatten(test_features)
 
-train_labels = np_utils.to_categorical(train_labels, len(activity_list))
-test_labels = np_utils.to_categorical(test_labels, len(activity_list))
+train_labels = to_categorical(train_labels, len(activity_list))
+test_labels = to_categorical(test_labels, len(activity_list))
 
 _run_(train_features, train_labels, test_features, test_labels)
