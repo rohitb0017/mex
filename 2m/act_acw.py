@@ -23,9 +23,9 @@ activity_list = ['01', '02', '03', '04', '05', '06', '07']
 id_list = range(len(activity_list))
 activity_id_dict = dict(zip(activity_list, id_list))
 
-act_path = '/home/mex/data/act/'
-acw_path = '/home/mex/data/acw/'
-results_file = '/home/mex/results_lopo/2m/chronos_ac_2m_lstm.csv'
+act_path = '/content/act/'
+acw_path = '/content/acw/'
+results_file = '/content/mex/results_lopo/2m/chronos_ac_2m_lstm.csv'
 
 frames_per_second = 100
 window = 5
