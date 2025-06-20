@@ -8,7 +8,7 @@ from keras.models import Model
 import pandas as pd
 import keras.backend as K
 import random
-from tensorflow.keras.utils import np_utils
+from tensorflow.keras.utils import to_categorical
 import tensorflow as tf
 import sys
 import torch
