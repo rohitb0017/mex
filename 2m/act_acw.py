@@ -8,10 +8,11 @@ from keras.models import Model
 import pandas as pd
 import keras.backend as K
 import random
-from scipy import fftpack
 from keras.utils import np_utils
 from tensorflow import set_random_seed
 import sys
+import torch
+from transformers import T5EncoderModel, T5Tokenizer
 
 random.seed(0)
 np.random.seed(1)
@@ -24,18 +25,22 @@ activity_id_dict = dict(zip(activity_list, id_list))
 
 act_path = '/home/mex/data/act/'
 acw_path = '/home/mex/data/acw/'
-results_file = '/home/mex/results_lopo/2m/dct_ac_2m_lstm.csv'
+results_file = '/home/mex/results_lopo/2m/chronos_ac_2m_lstm.csv'
 
 frames_per_second = 100
 window = 5
 increment = 2
-dct_length = 60
-feature_length = dct_length * 3
+feature_length = 512  # Chronos-T5 Base embedding size (adjust if different)
 
 ac_min_length = 95*window
 ac_max_length = 100*window
 fusion = int(sys.argv[1])
 
+# Load Chronos-T5 Base model and tokenizer
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+tokenizer = T5Tokenizer.from_pretrained("google/t5-v1_1-base")  # Fallback tokenizer; replace with Chronos-T5 specific if available
+model = T5EncoderModel.from_pretrained("amazon/chronos-t5-base").to(device)  # Adjust model name if different
+model.eval()
 
 def write_data(file_path, data):
     if os.path.isfile(file_path):
@@ -45,7 +50,6 @@ def write_data(file_path, data):
         f = open(file_path, 'w')
         f.write(data + '\n')
     f.close()
-
 
 def _read(_file):
     reader = csv.reader(open(_file, "r"), delimiter=",")
@@ -59,7 +63,6 @@ def _read(_file):
         _data.append(temp)
     return _data
 
-
 def read(path, _sensor):
     alldata = {}
     subjects = os.listdir(path)
@@ -71,7 +74,7 @@ def read(path, _sensor):
             sensor = activity.split('.')[0].replace(_sensor, '')
             activity_id = sensor.split('_')[0]
             sensor_index = sensor.split('_')[1]
-            _data = _read(os.path.join(subject_path, activity), )
+            _data = _read(os.path.join(subject_path, activity))
             if activity_id in allactivities:
                 allactivities[activity_id][sensor_index] = _data
             else:
@@ -80,10 +83,8 @@ def read(path, _sensor):
         alldata[subject] = allactivities
     return alldata
 
-
 def find_index(_data, _time_stamp):
     return [_index for _index, _item in enumerate(_data) if _item[0] >= _time_stamp][0]
-
 
 def trim(_data):
     _length = len(_data)
@@ -92,7 +93,6 @@ def trim(_data):
     for i in range(window*frames_per_second):
         _new_data.append(_data[i*_inc])
     return _new_data
-
 
 def frame_reduce(_features):
     if frames_per_second == 0:
@@ -112,7 +112,6 @@ def frame_reduce(_features):
             _activities[activity] = time_windows
         new_features[subject] = _activities
     return new_features
-
 
 def split_windows(act_data, acw_data):
     outputs = []
@@ -150,8 +149,6 @@ def split_windows(act_data, acw_data):
         outputs.append(instances)
     return outputs
 
-
-# single sensor
 def extract_features(act_data, acw_data):
     _features = {}
     for subject in act_data:
@@ -168,53 +165,44 @@ def extract_features(act_data, acw_data):
         _features[subject] = _activities
     return _features
 
-
 def train_test_split(user_data, test_ids):
     train_data = {key: value for key, value in user_data.items() if key not in test_ids}
     test_data = {key: value for key, value in user_data.items() if key in test_ids}
     return train_data, test_data
 
-
-def dct(data):
+def chronos_features(data):
     new_data = []
     data = np.array(data)
-    data = np.reshape(data, (data.shape[0], 2, window, frames_per_second, 3))
+    data = np.reshape(data, (data.shape[0], 2, window*frames_per_second, frame_size))  # Shape: (samples, 2, 500, 3)
+    
     for item in data:
         new_item = []
-        for it in item:
-            new_its = []
-            for i in range(it.shape[0]):
-                if dct_length > 0:
-                    x = [t[0] for t in it[i]]
-                    y = [t[1] for t in it[i]]
-                    z = [t[2] for t in it[i]]
-
-                    dct_x = np.abs(fftpack.dct(x, norm='ortho'))
-                    dct_y = np.abs(fftpack.dct(y, norm='ortho'))
-                    dct_z = np.abs(fftpack.dct(z, norm='ortho'))
-
-                    v = np.array([])
-                    v = np.concatenate((v, dct_x[:dct_length]))
-                    v = np.concatenate((v, dct_y[:dct_length]))
-                    v = np.concatenate((v, dct_z[:dct_length]))
-                    new_its.append(v)
-            new_item.append(new_its)
+        for it in item:  # Process act and acw separately
+            # Flatten the window (500 samples x 3 axes = 1500 values)
+            flat_data = it.flatten()
+            # Convert to string for T5 input (Chronos-T5 expects numerical sequences as text)
+            data_str = " ".join([str(x) for x in flat_data])
+            inputs = tokenizer(data_str, return_tensors="pt", max_length=512, truncation=True, padding="max_length").to(device)
+            
+            with torch.no_grad():
+                outputs = model(**inputs).last_hidden_state  # Shape: (1, seq_len, hidden_size)
+                # Average pooling over sequence length to get a fixed-size embedding
+                embedding = outputs.mean(dim=1).squeeze().cpu().numpy()  # Shape: (512,)
+            new_item.append(embedding)
         new_data.append(new_item)
     return new_data
-
 
 def flatten(_data):
     flatten_data = []
     flatten_labels = []
-
+    
     for subject in _data:
         activities = _data[subject]
         for activity in activities:
             activity_data = activities[activity]
             flatten_data.extend(activity_data)
             flatten_labels.extend([activity for i in range(len(activity_data))])
-    return dct(flatten_data), flatten_labels
-
+    return chronos_features(flatten_data), flatten_labels
 
 def pad(data, length):
     pad_length = []
@@ -230,7 +218,6 @@ def pad(data, length):
         new_data.append(data[len(data) - 1])
     return new_data
 
-
 def reduce(data, length):
     red_length = []
     if length % 2 == 0:
@@ -239,7 +226,6 @@ def reduce(data, length):
         red_length = [int(length / 2) + 1, int(length / 2)]
     new_data = data[red_length[0]:len(data) - red_length[1]]
     return new_data
-
 
 def pad_features(_features):
     new_features = {}
@@ -261,18 +247,17 @@ def pad_features(_features):
                     new_item.append(pad(item[0], ac_max_length - act_len))
                 else:
                     new_item.append(item[0])
-
+                
                 if acw_len > ac_max_length:
                     new_item.append(reduce(item[1], acw_len - ac_max_length))
                 elif acw_len < ac_max_length:
-                    new_item.append(pad(item[1], ac_max_length - acw_len))
+                    new_item.append(pad(item[1], ac_max_length - ac_len))
                 else:
                     new_item.append(item[1])
                 new_items.append(new_item)
             new_activities[act] = new_items
         new_features[subject] = new_activities
     return new_features
-
 
 def build_late_fusion():
     input_t = Input(shape=(window, feature_length, 1))
@@ -313,7 +298,6 @@ def build_late_fusion():
     model.summary()
     return model
 
-
 def build_early_fusion():
     input_t = Input(shape=(window, feature_length, 1))
     input_w = Input(shape=(window, feature_length, 1))
@@ -345,7 +329,6 @@ def build_early_fusion():
     model.summary()
     return model
 
-
 def build_mid_fusion():
     input_t = Input(shape=(window, feature_length, 1))
     input_w = Input(shape=(window, feature_length, 1))
@@ -366,7 +349,7 @@ def build_mid_fusion():
     y = TimeDistributed(Conv1D(64, kernel_size=5, activation='relu'))(y)
     y = TimeDistributed(MaxPooling1D(pool_size=2))(y)
     y = TimeDistributed(BatchNormalization())(y)
-    y = Reshape((K.int_shape(y)[1], K.int_shape(y)[2]*K.int_shape(y)[3]))(y)
+    y = Reshape((K.int_shape(y)[1], K.int_shape(x)[2]*K.int_shape(x)[3]))(y)
     y = LSTM(1200)(y)
     y = BatchNormalization()(y)
 
@@ -381,7 +364,6 @@ def build_mid_fusion():
     model = Model(inputs=[input_t, input_w], outputs=z)
     model.summary()
     return model
-
 
 def _run_(_train_features, _train_labels, _test_features, _test_labels):
     _train_features = np.array(_train_features)
@@ -414,7 +396,7 @@ def _run_(_train_features, _train_labels, _test_features, _test_labels):
     _predict_labels = model.predict([_test_features_t, _test_features_w], batch_size=64, verbose=0)
     f_score = metrics.f1_score(_test_labels.argmax(axis=1), _predict_labels.argmax(axis=1), average='macro')
     accuracy = metrics.accuracy_score(_test_labels.argmax(axis=1), _predict_labels.argmax(axis=1))
-    results = 'dct_ac_2m_lstm' + ',' + str(fusion) + ',' + str(sys.argv[2]) + ',' + str(accuracy)+',' + str(f_score)
+    results = 'chronos_ac_2m_lstm' + ',' + str(fusion) + ',' + str(sys.argv[2]) + ',' + str(accuracy)+',' + str(f_score)
     print(results)
     write_data(results_file, str(results))
 
@@ -423,7 +405,6 @@ def _run_(_train_features, _train_labels, _test_features, _test_labels):
     # df_confusion = pd.crosstab(_test_labels, _predict_labels)
     # print(df_confusion)
     # write_data(results_file, str(df_confusion))
-
 
 act_data = read(act_path, '_act')
 acw_data = read(acw_path, '_acw')
