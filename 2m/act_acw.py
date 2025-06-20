@@ -192,7 +192,7 @@ def chronos_features(data):
                 print("Vocab size:", tokenizer.vocab_size)
                 assert inputs["input_ids"].max() < tokenizer.vocab_size, "Invalid token ID!"
 
-                outputs = model(**inputs).last_hidden_state  # Shape: (1, seq_len, hidden_size)
+                outputs = model(**inputs, use_cache = False).last_hidden_state  # Shape: (1, seq_len, hidden_size)
                 # Average pooling over sequence length to get a fixed-size embedding
                 embedding = outputs.mean(dim=1).squeeze().cpu().numpy()  # Shape: (512,)
             new_item.append(embedding)
