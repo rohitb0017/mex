@@ -38,8 +38,8 @@ fusion = int(sys.argv[1])
 
 # Load Chronos-T5 Base model and tokenizer
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = T5Tokenizer.from_pretrained("t5-base")  # Fallback tokenizer; replace with Chronos-T5 specific if available
-model = T5EncoderModel.from_pretrained("t5-base").to(device)  # Adjust model name if different
+tokenizer = T5Tokenizer.from_pretrained("amazon/chronos-t5-base")  # Fallback tokenizer; replace with Chronos-T5 specific if available
+model = T5EncoderModel.from_pretrained("amazon/chronos-t5-base").to(device)  # Adjust model name if different
 model.eval()
 
 def write_data(file_path, data):
